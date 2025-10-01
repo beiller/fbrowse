@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Media Browser</title>
+  <style>
+    body { font-family: sans-serif; }
+    .grid { display: flex; flex-wrap: wrap; gap: 10px; }
+    .thumb { 
+      width: 150px; 
+      cursor: pointer; 
+      background: #ccc;
+      min-height: 100px;
+    }
+    .fullscreen {
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.9);
+      display: none; align-items: center; justify-content: center;
+      flex-direction: column;
+    }
+    .fullscreen img, .fullscreen video {
+      max-width: 100%;
+      max-height: 90vh;
+    }
+    .controls {
+      color: white;
+      margin-top: 10px;
+      
+  position: absolute;
+  bottom: 20px;
+  width: 100%;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 10px;
+
+    }
+  </style>
+</head>
+<body>
+
+  <button id="upBtn">⬆️ Up</button>
+  <div id="grid" class="grid"></div>
+
+  <div id="fullscreen" class="fullscreen">
+    <div class="media-container"></div>
+    <div class="controls">
+      <button onclick="prev()">⬅️</button>
+      <button onclick="next()">➡️</button>
+      <button onclick="exitFullscreenMode()">❌</button>
+      <button id="playPause">▶️ Play</button>
+      <input id="seek" type="range" value="0" min="0" max="100" step="0.1">
+      <button id="fullscreenExit" onclick="document.exitFullscreen();">❌ Exit</button>
+      <button id="fullscreenEenter">FS</button>
+    </div>
+  </div>
+
+  <script>
+    let currentPath = '/';
+    let files = [];
+    let currentIndex = -1;
+
+    const loadDelays = new WeakMap();
+
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        const el = entry.target;
+
+        if (entry.isIntersecting) {
+          // Already scheduled? Do nothing
+          if (loadDelays.has(el)) return;
+
+          const timeoutId = setTimeout(() => {
+            const src = el.getAttribute('data-src');
+            if (src) {
+              el.src = src;
+              el.removeAttribute('data-src');
+            }
+            loadDelays.delete(el);
+            // DO NOT unobserve here — we now want to track if it scrolls out
+          }, 500);
+
+          loadDelays.set(el, timeoutId);
+        } else {
+          // Cancel delayed load if it was pending
+          const timeoutId = loadDelays.get(el);
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            loadDelays.delete(el);
+            return;
+          }
+
+          // If already loaded, unload the media
+          if (el.src) {
+            el.setAttribute('data-src', el.src);
+            el.removeAttribute('src');
+            if (el.tagName === 'VIDEO') {
+              el.load(); // unload video buffer
+            }
+          }
+        }
+      });
+    }, {
+      rootMargin: "200px"
+    });
+
+
+    function fetchList(path) {
+      fetch(`/list?path=${encodeURIComponent(path)}`)
+        .then(res => res.json())
+        .then(data => {
+          currentPath = data.currentPath;
+          files = data.files;
+          renderGrid();
+        });
+    }
+
+    function renderGrid() {
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+      files.forEach((f, i) => {
+        const el = document.createElement('div');
+
+        if (f.type === 'directory') {
+          el.textContent = `📁 ${f.name}`;
+          el.onclick = () => fetchList(pathJoin(currentPath, f.name));
+        } else if (isMedia(f.name)) {
+          const mediaUrl = `/media${pathJoin(currentPath, f.name)}`;
+          const tag = isImage(f.name) ? 'img' : 'video';
+          const thumb = document.createElement(tag);
+          thumb.setAttribute('data-src', mediaUrl);
+          thumb.className = 'thumb';
+          thumb.onclick = () => openFullscreen(i);
+          if (tag === 'video') {
+            thumb.loop = true;
+          }
+          el.appendChild(thumb);
+          observer.observe(thumb);
+        }
+        grid.appendChild(el);
+      });
+    }
+
+    function isImage(name) {
+      return name.match(/\.(jpg|jpeg|png|gif)$/i);
+    }
+
+    function isVideo(name) {
+      return name.match(/\.(mp4|webm|mov)$/i);
+    }
+
+    function isMedia(name) {
+      return isImage(name) || isVideo(name);
+    }
+
+    function pathJoin(p1, p2) {
+      return (p1 + '/' + p2).replace(/\/+/g, '/');
+    }
+
+    function openFullscreen(index) {
+      currentIndex = index;
+      const file = files[index];
+      const container = document.querySelector('.media-container');
+      let el = null;
+
+      if (container.firstChild && container.firstChild.tagName == "VIDEO" && isVideo(file.name)) {
+        el = container.firstChild
+        console.log("here1")
+      }
+      else if (container.firstChild && container.firstChild.tagName == "IMG" && isImage(file.name)) {
+        el = container.firstChild;
+        console.log("here2")
+      } else {
+        el = isImage(file.name) ? document.createElement('img') : document.createElement('video');
+        container.innerHTML = '';
+        container.appendChild(el);
+      }
+      const src = `/media${pathJoin(currentPath, file.name)}`;
+      el.src = src;
+      if (el.tagName === 'VIDEO') { 
+        el.controls = false;
+        el.loop = true;
+        el.autoplay = true;
+      }
+      document.getElementById('fullscreen').style.display = 'flex';
+      document.getElementById('fullscreen').requestFullscreen()
+    }
+
+    function exitFullscreenMode() {
+      const container = document.querySelector('.media-container');
+      container.innerHTML = '';
+      document.getElementById('fullscreen').style.display = 'none';
+      currentIndex = -1;
+      document.exitFullscreen();
+    }
+
+    function next() {
+      for (let i = currentIndex + 1; i < files.length; i++) {
+        if (isMedia(files[i].name)) return openFullscreen(i);
+      }
+    }
+
+    function prev() {
+      for (let i = currentIndex - 1; i >= 0; i--) {
+        if (isMedia(files[i].name)) return openFullscreen(i);
+      }
+    }
+
+    document.getElementById('upBtn').onclick = () => {
+      const parts = currentPath.split('/').filter(Boolean);
+      parts.pop();
+      fetchList('/' + parts.join('/'));
+    };
+
+    fetchList('/');
+  </script>
+</body>
+</html>
+
