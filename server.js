@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const app = express();
 
-const BASE_DIR = '/Volumes/src/ComfyUI/output';
+const BASE_DIR = '/home/bill/src/ComfyUI/output';
 
 app.use('/media', express.static(BASE_DIR));
 app.use('/', express.static(__dirname + '/public'));
@@ -17,7 +17,7 @@ function isVideo(name) {
 }
 
 function getType(name) {
-  return isImage(name) ? 1 : isVideo(name) ? 2 : 3
+  return isImage(name) ? 2 : isVideo(name) ? 3 : 4
 }
 
 app.get('/list', (req, res) => {
@@ -26,14 +26,16 @@ app.get('/list', (req, res) => {
 
   fs.readdir(dirPath, { withFileTypes: true }, (err, items) => {
     if (err) return res.status(500).json({ error: err.message });
-
     const files = items.map(item => {
       return {
         name: item.name,
-        type: item.isDirectory() ? 0 : getType(item.name),
-        modified: item.modified
+        type: item.isDirectory() ? 1 : getType(item.name),
+        modified: fs.statSync(dirPath + '/' + item.name).mtime.getTime()
       };
-    }).sort((a, b)=>b.type-a.type).reverse()
+    })
+    // console.log(files.slice(0, 5));
+    files.sort((a, b) => (a.modified - b.modified) * -1.0)
+    //files.reverse();
 
     res.json({
       currentPath: queryPath,
