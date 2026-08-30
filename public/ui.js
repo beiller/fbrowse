@@ -68,7 +68,10 @@ const observer = new IntersectionObserver(entries => {
                         //el.style.width = Math.min(e.target.width+'px';
                         el.style.height = e.target.getBoundingClientRect().height+'px';
                     }
-                    el2.src = src;
+		    if(el2.tagName === 'VIDEO') {
+		    } else {
+                    	el2.src = src;
+		    }
                     el.appendChild(el2);
                     //el.removeAttribute('data-src');
                 }
@@ -227,6 +230,7 @@ function getHTMLVideoElement(index) {
 }
 
 function openFullscreen(index) {
+    requestWakeLock();
     currentIndex = index;
     const file = files[currentIndex];
     const container = document.querySelector('.media-container');
@@ -267,6 +271,8 @@ function exitFullscreenMode() {
     document.getElementById('fullscreen').style.display = 'none';
     currentIndex = -1;
     document.exitFullscreen();
+    
+    releaseWakeLock();
 }
 
 function resetPlaylist(index) {
@@ -340,3 +346,33 @@ const toggleSkipImages = () => {
 }
 
 fetchList('/');
+
+
+// The wake lock sentinel.
+let wakeLock = null;
+
+// Function that attempts to request a wake lock.
+const requestWakeLock = async () => {
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => {
+      console.log('Wake Lock was released');
+    });
+    console.log('Wake Lock is active');
+  } catch (err) {
+    console.error(`${err.name}, ${err.message}`);
+  }
+};
+
+// Function that attempts to release the wake lock.
+const releaseWakeLock = async () => {
+  if (!wakeLock) {
+    return;
+  }
+  try {
+    await wakeLock.release();
+    wakeLock = null;
+  } catch (err) {
+    console.error(`${err.name}, ${err.message}`);
+  }
+};    
