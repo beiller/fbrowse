@@ -16,6 +16,7 @@ let enableLoop = true;
 let imgSlideshowDelay = 5000;
 let skipImages = true;
 let playDirection = 0;
+let imgSlideshowTimer = null;
 
 
 /*
@@ -68,6 +69,16 @@ const observer = new IntersectionObserver(entries => {
                         //el.style.width = Math.min(e.target.width+'px';
                         el.style.height = e.target.getBoundingClientRect().height+'px';
                     }
+                    el2.onerror = () => {
+                        if (el.dataset.retried) return;
+                        el.dataset.retried = '1';
+                        setTimeout(() => {
+                            el.innerHTML = '';
+                            const img = document.createElement('img');
+                            img.src = src + '&r=1';
+                            el.appendChild(img);
+                        }, 2000);
+                    }
 		    if(el2.tagName === 'VIDEO') {
 		    } else {
                     	el2.src = src;
@@ -110,27 +121,27 @@ function fetchList(path) {
         .then(res => res.json())
         .then(data => {
             currentPath = data.currentPath;
-            files = data.files;
+            files = data.files.map(f => ({ ...f, id: pathJoin(currentPath, f.name) }));
             renderGrid();
         });
 }
 
-function addToCollection(identifier) {
+function addToCollection(file) {
     const collectionId = globalDatabase["currentCollection"]
     let existing = null;
     for (let i = 0; i < globalDatabase["collections"][collectionId]["files"].length; i++) {
         const e = globalDatabase["collections"][collectionId]["files"][i];
-        if (e.id == identifier) {
+        if (e.id == file.id) {
             existing = i
             break;
         }
     }
     if (existing === null) {
-        console.log("Adding to fav:", identifier)
-        globalDatabase["collections"][collectionId]["files"].push({ "id": 0, "name": identifier, "id": identifier });
+        console.log("Adding to fav:", file.id)
+        globalDatabase["collections"][collectionId]["files"].push({ "id": file.id, "name": file.name });
     } else {
-        console.log("Removing from fav:", identifier)
-        globalDatabase["collections"][collectionId]["files"] = globalDatabase["collections"][collectionId]["files"].splice(existing, 1);
+        console.log("Removing from fav:", file.id)
+        globalDatabase["collections"][collectionId]["files"].splice(existing, 1);
     }
     window.localStorage.setItem(GLOBAL_DATABASE_PATH, JSON.stringify(globalDatabase));
     console.log(globalDatabase);
@@ -167,20 +178,32 @@ function renderGrid() {
     grid.innerHTML = '';
     files.forEach((f, i) => {
         const el = document.createElement('div');
-        if (f.type === 1) {
+        const fileDir = inFavMode ? pathJoin('/', f.id.split('/').slice(0, -1).join('/')) : currentPath;
+        if (getFilterType() && !getFilterType()(f.name)) return;
+        if (f.type === 1 && !inFavMode) {
             const thumb = document.createElement('div');
             thumb.className = 'thumb';
             thumb.textContent = `📁 ${f.name}`;
-            thumb.onclick = () => fetchList(pathJoin(currentPath, f.name));
+            thumb.onclick = () => fetchList(pathJoin(fileDir, f.name));
+            el.appendChild(thumb);
+
+        } else if (inFavMode && !isMedia(f.name)) {
+            const thumb = document.createElement('div');
+            thumb.className = 'thumb';
+            thumb.textContent = `${f.name} (missing?)`;
             el.appendChild(thumb);
 
         } else if (isMedia(f.name)) {
-            const mediaUrl = `/media${pathJoin(currentPath, f.name)}`;
+            const mediaUrl = `/media${pathJoin(fileDir, f.name)}`;
             //const tag = isImage(f.name) ? 'img' : 'video';
             const tag = 'div'
             const thumb = document.createElement(tag);
-            thumb.setAttribute('data-src', mediaUrl);
-            thumb.setAttribute('data-tag', isImage(f.name) ? 'img' : 'video');
+            if (isVideo(f.name)) {
+                thumb.setAttribute('data-src', `/thumb?path=${encodeURIComponent(pathJoin(fileDir, f.name))}`);
+            } else {
+                thumb.setAttribute('data-src', mediaUrl);
+            }
+            thumb.setAttribute('data-tag', 'img');
             thumb.className = 'thumb';
             thumb.onclick = () => openFullscreen(i);
             el.appendChild(thumb);
@@ -224,15 +247,15 @@ const playbackEnded = (e) => {
     }
 }
 
-function getHTMLVideoElement(index) {
-
-    return el;
+function getHTMLVideoElement() {
+    return document.querySelector('.media-container video');
 }
 
 function openFullscreen(index) {
     requestWakeLock();
     currentIndex = index;
     const file = files[currentIndex];
+    const fileDir = inFavMode ? pathJoin('/', file.id.split('/').slice(0, -1).join('/')) : currentPath;
     const container = document.querySelector('.media-container');
     let el = null;
     if (container.firstChild && container.firstChild.tagName == "VIDEO" && isVideo(file.name)) {
@@ -242,20 +265,27 @@ function openFullscreen(index) {
         el = container.firstChild;
     } else {
         el = isImage(file.name) ? document.createElement('img') : document.createElement('video');
+        if (el.tagName === 'VIDEO') {
+            el.addEventListener("contextmenu", () => addToCollection(el._file), false);
+            el.addEventListener("ended", playbackEnded, false);
+        }
         container.innerHTML = '';
         container.appendChild(el);
     }
-    el.src = `/media${pathJoin(currentPath, file.name)}`;
+    if (imgSlideshowTimer !== null) {
+        clearTimeout(imgSlideshowTimer);
+        imgSlideshowTimer = null;
+    }
+    el._file = file;
+    el.src = `/media${pathJoin(fileDir, file.name)}`;
     if (el.tagName === 'VIDEO') {
         el.controls = false;
         el.loop = false;
         el.autoplay = true;
         el.removeEventListener("click", playpauseVideoTap);
         el.addEventListener("click", playpauseVideoTap, false);
-        el.addEventListener("contextmenu", () => addToCollection(file.name), false);
-        el.addEventListener("ended", playbackEnded, false);
     } else if (el.tagName === 'IMG') {
-        setTimeout(() => {
+        imgSlideshowTimer = setTimeout(() => {
             playbackEnded({ target: el });
         }, imgSlideshowDelay)
     }
@@ -270,7 +300,9 @@ function exitFullscreenMode() {
     container.innerHTML = '';
     document.getElementById('fullscreen').style.display = 'none';
     currentIndex = -1;
-    document.exitFullscreen();
+    if (document.fullscreenElement) {
+        document.exitFullscreen();
+    }
     
     releaseWakeLock();
 }
@@ -320,16 +352,16 @@ document.getElementById('upBtn').onclick = () => {
 };
 
 document.getElementById('vBtn').onclick = () => {
-    const parts = currentPath.split('/').filter(Boolean);
-    parts.pop();
-    fetchList('/' + parts.join('/'));
-    //getHTMLVideoElement().playBackwards();
+    inFavMode = false;
+    setFilterType(isVideo);
+    renderGrid();
 };
 
+
 document.getElementById('iBtn').onclick = () => {
-    const parts = currentPath.split('/').filter(Boolean);
-    parts.pop();
-    fetchList('/' + parts.join('/'));
+    inFavMode = false;
+    setFilterType(isImage);
+    renderGrid();
 };
 
 const toggleForwardsRepeat = () => {
