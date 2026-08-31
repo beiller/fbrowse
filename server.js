@@ -12,9 +12,32 @@ const BASE_DIR = '/home/bill/src/ComfyUI/output';
 
 app.use('/media', express.static(BASE_DIR));
 app.use('/', express.static(__dirname + '/public'));
+app.use(express.json());
 
 const THUMB_DIR = process.env.FBROWSE_THUMB_DIR || path.join(os.homedir(), '.cache', 'fbrowse', 'thumbs');
 fs.mkdirSync(THUMB_DIR, { recursive: true });
+
+const VOTE_FILE = process.env.FBROWSE_VOTE_FILE || path.join(os.homedir(), '.cache', 'fbrowse', 'votes.json');
+
+let votes = new Map();
+
+function loadVotes() {
+  try {
+    const data = JSON.parse(fs.readFileSync(VOTE_FILE, 'utf8'));
+    for (const [k, v] of Object.entries(data)) votes.set(k, v);
+  } catch (e) {}
+}
+
+function saveVotes() {
+  const obj = {};
+  for (const [k, v] of votes) if (v.up || v.down || v.my) obj[k] = v;
+  const tmp = VOTE_FILE + '.' + process.pid + '.tmp';
+  fs.mkdirSync(path.dirname(VOTE_FILE), { recursive: true });
+  fs.writeFileSync(tmp, JSON.stringify(obj));
+  fs.renameSync(tmp, VOTE_FILE);
+}
+
+loadVotes();
 
 let thumbQueue = [];
 let thumbActive = 0;
@@ -92,14 +115,19 @@ app.get('/list', (req, res) => {
   fs.readdir(dirPath, { withFileTypes: true }, (err, items) => {
     if (err) return res.status(500).json({ error: err.message });
     const files = items.map(item => {
+      const rel = (queryPath + '/' + item.name).replace(/\/+/g, '/');
+      const v = votes.get(rel) || { up: 0, down: 0, my: 0 };
       return {
         name: item.name,
         type: item.isDirectory() ? 1 : getType(item.name),
-        modified: fs.statSync(dirPath + '/' + item.name).mtime.getTime()
+        modified: fs.statSync(dirPath + '/' + item.name).mtime.getTime(),
+        up: v.up || 0,
+        down: v.down || 0,
+        my: v.my || 0
       };
     })
     // console.log(files.slice(0, 5));
-    files.sort((a, b) => (a.modified - b.modified) * -1.0)
+    files.sort((a, b) => ((b.up - b.down) - (a.up - a.down)) || (a.modified - b.modified) * -1.0)
     //files.reverse();
 
 
@@ -110,6 +138,49 @@ app.get('/list', (req, res) => {
   });
 });
 
+
+app.post('/vote', (req, res) => {
+  const rel = decodeURIComponent((req.body && req.body.path) || '');
+  const v = req.body && [1, -1, 0].includes(req.body.v) ? req.body.v : null;
+  if (v === null) return res.status(400).json({ error: 'bad vote' });
+
+  const abs = path.resolve(BASE_DIR, '.' + (rel.startsWith('/') ? rel : '/' + rel));
+  if (!abs.startsWith(BASE_DIR + path.sep)) return res.status(400).json({ error: 'bad path' });
+
+  const entry = votes.get(rel) || { up: 0, down: 0, my: 0 };
+  if (v === 0) {
+    if (entry.my > 0) entry.up -= entry.my;
+    else if (entry.my < 0) entry.down += entry.my;
+    entry.my = 0;
+  } else {
+    if (v === 1) {
+      if (entry.my < 0) entry.down--; else entry.up++;
+    } else {
+      if (entry.my > 0) entry.up--; else entry.down++;
+    }
+    entry.my += v;
+  }
+  votes.set(rel, entry);
+  saveVotes();
+  res.json({ up: entry.up, down: entry.down, my: entry.my });
+});
+
+app.get('/scored', (req, res) => {
+  const out = [];
+  for (const [rel, v] of votes) {
+    if ((v.up || 0) - (v.down || 0) <= 0) continue;
+    const abs = path.resolve(BASE_DIR, '.' + (rel.startsWith('/') ? rel : '/' + rel));
+    if (!abs.startsWith(BASE_DIR + path.sep)) continue;
+    try {
+      const st = fs.statSync(abs);
+      if (!st.isFile()) continue;
+      const name = path.basename(rel);
+      out.push({ name, path: rel, type: getType(name), modified: st.mtime.getTime(), up: v.up || 0, down: v.down || 0, my: v.my || 0 });
+    } catch (e) {}
+  }
+  out.sort((a, b) => ((b.up - b.down) - (a.up - a.down)) || (a.modified - b.modified) * -1.0);
+  res.json({ files: out });
+});
 
 app.listen(3000, '0.0.0.0', () => {
   console.log('Server running at http://0.0.0.0:3000');

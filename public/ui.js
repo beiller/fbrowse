@@ -25,23 +25,7 @@ let imgSlideshowTimer = null;
 */
 
 
-let globalDatabase = null;
-const GLOBAL_DATABASE_PATH = "";
-globalDatabase = window.localStorage.getItem(GLOBAL_DATABASE_PATH)
-if (!globalDatabase || true) {
-    globalDatabase = {
-        "favourites": [
-            //{"collection": 0, "name": "Base", "id": ???},
-        ], "collections": [
-            { "id": 0, "name": "BaseCollection", "files": [] }
-        ],
-        "currentCollection": 0
-    }
-} else {
-    globalDatabase = JSON.parse(globalDatabase);
-}
-window.localStorage.setItem(GLOBAL_DATABASE_PATH, JSON.stringify(globalDatabase));
-
+window.localStorage.removeItem('');
 const setFilterType = (newval) => { filterType = newval }
 const getFilterType = () => filterType
 const setEnableFullscreen = (newval) => { enableFullscreen = newval }
@@ -125,40 +109,19 @@ function fetchList(path) {
             renderGrid();
         });
 }
-
-function addToCollection(file) {
-    const collectionId = globalDatabase["currentCollection"]
-    let existing = null;
-    for (let i = 0; i < globalDatabase["collections"][collectionId]["files"].length; i++) {
-        const e = globalDatabase["collections"][collectionId]["files"][i];
-        if (e.id == file.id) {
-            existing = i
-            break;
-        }
-    }
-    if (existing === null) {
-        console.log("Adding to fav:", file.id)
-        globalDatabase["collections"][collectionId]["files"].push({ "id": file.id, "name": file.name });
-    } else {
-        console.log("Removing from fav:", file.id)
-        globalDatabase["collections"][collectionId]["files"].splice(existing, 1);
-    }
-    window.localStorage.setItem(GLOBAL_DATABASE_PATH, JSON.stringify(globalDatabase));
-    console.log(globalDatabase);
-}
 let inFavMode = false;
 
 function toggleFavouriteView() {
-    const collectionId = globalDatabase["currentCollection"];
-
     if (!inFavMode) {
-        //currentPath = "/";
-        files = globalDatabase["collections"][collectionId]["files"];
-        inFavMode = true
-        renderGrid();
-
+        inFavMode = true;
+        fetch('/scored')
+            .then(res => res.json())
+            .then(data => {
+                files = data.files.map(f => ({ ...f, id: f.path }));
+                renderGrid();
+            });
     } else {
-        inFavMode = false
+        inFavMode = false;
         fetchList(currentPath);
     }
 }
@@ -208,6 +171,7 @@ function renderGrid() {
             thumb.onclick = () => openFullscreen(i);
             el.appendChild(thumb);
             observer.observe(thumb);
+            addVoteUI(el, f, pathJoin(fileDir, f.name));
         }
         grid.appendChild(el);
     });
@@ -227,6 +191,82 @@ function isMedia(name) {
 
 function pathJoin(p1, p2) {
     return (p1 + '/' + p2).replace(/\/+/g, '/');
+}
+
+
+function nextVoteState(cur, v) {
+    const s = { up: cur.up || 0, down: cur.down || 0, my: cur.my || 0 };
+    if (v === 0) {
+        if (s.my > 0) s.up -= s.my;
+        else if (s.my < 0) s.down += s.my;
+        s.my = 0;
+    } else {
+        if (v === 1) {
+            if (s.my < 0) s.down--; else s.up++;
+        } else {
+            if (s.my > 0) s.up--; else s.down++;
+        }
+        s.my += v;
+    }
+    return s;
+}
+
+
+function paintVotes(el, f) {
+    const my = f.my || 0;
+    el._voteUp.classList.toggle('active', my > 0);
+    el._voteDown.classList.toggle('active', my < 0);
+    el._voteUp.textContent = '\u25b2' + (my > 0 ? '\u00d7' + my : '');
+    el._voteDown.textContent = '\u25bc' + (my < 0 ? '\u00d7' + -my : '');
+    const net = (f.up || 0) - (f.down || 0);
+    el._voteScore.textContent = net > 0 ? '+' + net : String(net);
+    el._voteScore.classList.toggle('show', net !== 0);
+}
+
+
+function castVote(f, v, el) {
+    const key = el._voteKey;
+    const prev = { up: f.up || 0, down: f.down || 0, my: f.my || 0 };
+    const next = nextVoteState(prev, v);
+    Object.assign(f, next);
+    paintVotes(el, f);
+    fetch('/vote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: key, v })
+    }).then(r => r.json()).then(data => {
+        Object.assign(f, data);
+        paintVotes(el, f);
+    }).catch(() => {
+        Object.assign(f, prev);
+        paintVotes(el, f);
+        alert('Vote failed');
+    });
+}
+
+
+function addVoteUI(el, f, key) {
+    const box = document.createElement('div');
+    box.className = 'votebox';
+    const upB = document.createElement('button');
+    upB.className = 'up';
+    upB.textContent = '\u25b2';
+    const downB = document.createElement('button');
+    downB.className = 'down';
+    downB.textContent = '\u25bc';
+    upB.onclick = (e) => { e.stopPropagation(); castVote(f, 1, el); };
+    downB.onclick = (e) => { e.stopPropagation(); castVote(f, -1, el); };
+    box.appendChild(upB);
+    box.appendChild(downB);
+    const score = document.createElement('div');
+    score.className = 'votescore';
+    el.appendChild(box);
+    el.appendChild(score);
+    el._voteKey = key;
+    el._voteUp = upB;
+    el._voteDown = downB;
+    el._voteScore = score;
+    paintVotes(el, f);
 }
 
 
@@ -266,7 +306,6 @@ function openFullscreen(index) {
     } else {
         el = isImage(file.name) ? document.createElement('img') : document.createElement('video');
         if (el.tagName === 'VIDEO') {
-            el.addEventListener("contextmenu", () => addToCollection(el._file), false);
             el.addEventListener("ended", playbackEnded, false);
         }
         container.innerHTML = '';

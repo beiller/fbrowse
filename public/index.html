@@ -20,7 +20,7 @@
       height: 100%; */
     }
     .fullscreen {
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0; margin: 0px; padding: 0px;
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; margin: 0px; padding: 0px; z-index: 10;
       background: rgba(0, 0, 0, 0.9);
       display: none; align-items: center; justify-content: center;
       flex-direction: column;
@@ -57,6 +57,25 @@
     .controlsButtons button {
       width: 10em;
     }
+    .grid > div { position: relative; }
+    .votebox {
+      position: absolute; top: 2px; right: 2px; z-index: 2;
+      display: none; flex-direction: column; gap: 2px;
+    }
+    .grid > div:hover .votebox { display: flex; }
+    .votebox button {
+      min-width: 26px; height: 24px; padding: 0 4px; font-size: 12px; line-height: 1;
+      background: rgba(0, 0, 0, 0.55); color: #fff; border: none;
+      border-radius: 3px; cursor: pointer;
+    }
+    .votebox button.up.active { background: #2ecc71; }
+    .votebox button.down.active { background: #e74c3c; }
+    .votescore {
+      position: absolute; left: 2px; bottom: 2px; z-index: 2;
+      background: rgba(0, 0, 0, 0.55); color: #fff; font-size: 11px;
+      padding: 1px 4px; border-radius: 3px; display: none;
+    }
+    .votescore.show { display: block; }
   </style>
 </head>
 <body>
