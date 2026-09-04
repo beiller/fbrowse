@@ -2,9 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
   <title>Media Browser</title>
   <style>
-    body { font-family: sans-serif; margin: 0; padding: 0; }
+    body { font-family: sans-serif; margin: 0; padding: 0; touch-action: manipulation; }
     .grid { display: flex; flex-wrap: wrap; gap: 10px; }
     .thumb { 
       width: 150px; 
@@ -16,8 +17,6 @@
       width: 150px;
       object-fit: cover; 
       min-height: 100px;
-      /* width: 100%; 
-      height: 100%; */
     }
     .fullscreen {
       position: fixed; top: 0; left: 0; right: 0; bottom: 0; margin: 0px; padding: 0px; z-index: 10;
@@ -26,37 +25,49 @@
       flex-direction: column;
       height: 100%;
     }
-    .fullscreen img, .fullscreen video {
-      /* max-width: 100%; */
-      /* max-height: 90vh; */
-    }
     .media-container {
-      height: 100%;
-      margin: 0;
-      padding: 0;
+      flex: 1;
+      width: 100%;
+      min-height: 0;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0; padding: 0;
     }
     .media-container video, .media-container img {
-      height: 100%;margin: 0;padding: 0;
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      margin: 0; padding: 0;
     }
     .controls {
       color: white;
-      
-      position: absolute;
-      bottom: 20px;
+      position: absolute; left: 0; right: 0; bottom: 12px;
       display: flex;
-      gap: 10px;
-      justify-content: space-between;
+      justify-content: center;
       align-items: center;
       background: rgba(0, 0, 0, 0.4);
-      height: 5%;
+      border-radius: 8px;
+      padding: 4px 8px;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+    .controls.hidden {
+      opacity: 0;
+      transform: translateY(16px);
+      pointer-events: none;
     }
     .controlsButtons {
-      position: relative;
-      height: 100%;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: center;
     }
     .controlsButtons button {
-      width: 10em;
+      min-width: 44px;
+      min-height: 44px;
+      padding: 6px 10px;
+      font-size: 15px;
+      border-radius: 6px;
     }
+    .controlsButtons button.active { background: #2ecc71; }
     .grid > div { position: relative; }
     .votebox {
       position: absolute; top: 2px; right: 2px; z-index: 2;
@@ -76,6 +87,56 @@
       padding: 1px 4px; border-radius: 3px; display: none;
     }
     .votescore.show { display: block; }
+
+    .pladd {
+      position: absolute; top: 2px; left: 2px; z-index: 2;
+      width: 26px; height: 24px; padding: 0; font-size: 13px; line-height: 1;
+      background: rgba(0, 0, 0, 0.55); color: #fff; border: none;
+      border-radius: 3px; cursor: pointer; display: none;
+    }
+
+    .grid > div:hover .pladd { display: block; }
+
+    .plrem {
+      position: absolute; bottom: 2px; right: 2px; z-index: 2;
+      width: 26px; height: 24px; padding: 0; font-size: 12px; line-height: 1;
+      background: rgba(231, 76, 60, 0.85); color: #fff; border: none;
+      border-radius: 3px; cursor: pointer; display: none;
+    }
+
+    .grid > div:hover .plrem { display: block; }
+
+    .thumb.drop-before { box-shadow: -3px 0 0 0 #2ecc71; }
+
+    .thumb.drop-after { box-shadow: 3px 0 0 0 #2ecc71; }
+
+    .plpick-ov {
+      position: fixed; inset: 0; z-index: 20; background: rgba(0, 0, 0, 0.6);
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .plpick-box {
+      background: #1e1e1e; color: #fff; border-radius: 8px; padding: 12px;
+      width: min(360px, 90vw); max-height: 80vh; overflow-y: auto;
+    }
+
+    .plpick-title { font-size: 15px; font-weight: bold; margin-bottom: 8px; }
+
+    .plpick-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+
+    .plpick-item {
+      display: flex; align-items: center; gap: 6px; padding: 4px 6px;
+      background: #2a2a2a; border-radius: 4px;
+    }
+
+    .plpick-item span { flex: 1; cursor: pointer; }
+
+    .plpick-row { display: flex; gap: 6px; margin-bottom: 8px; }
+
+    .plpick-row input { flex: 1; padding: 6px; border-radius: 4px; border: none; }
+
+    .plpick-box button { min-height: 30px; border: none; border-radius: 4px; cursor: pointer; background: #3a3a3a; color: #fff; padding: 0 8px; }
+
   </style>
 </head>
 <body>
@@ -84,34 +145,18 @@
   <button id="vBtn">⬆️ Video</button>
   <button id="iBtn">⬆️ Image</button>
   <button onclick="toggleFavouriteView()">FAV</button>
+  <button id="playBtn">&#9654; PLAY</button>
   <div id="grid" class="grid"></div>
-
-  <script type="text/javascript">
-const playBackwards = function (video) {
-    video.pause();
-    let fps = 16;
-    let intervalRewind = setInterval(function () {
-        if (video.currentTime <= 0) {
-            clearInterval(intervalRewind);
-            video.pause();
-        } else {
-            video.currentTime -= 1 / fps;
-        }
-    }, 1000 / fps);
-};
-
-  </script>
 
   <div id="fullscreen" class="fullscreen">
     <div class="media-container"></div>
     <div class="controls">
       <div class="controlsButtons">
         <button onclick="prev()">⬅️</button>
+        <button onclick="togglePlayPause()">⏯</button>
         <button onclick="next()">➡️</button>
         <button onclick="exitFullscreenMode()">❌</button>
-        <!-- <button onclick="playBackwards(getHTMLVideoElement())">▶️</button> -->
-        <button onclick="toggleForwardsRepeat()">▶️</button>
-        <!-- <input id="seek" type="range" value="0" min="0" max="100" step="0.1"> -->
+        <button id="repeatBtn" onclick="toggleForwardsRepeat()">🔁</button>
         <button onclick="toggleSkipImages();">IMG</button>
         <button onclick="setEnableFullscreen(!getEnableFullscreen())">FS</button>
       </div>
@@ -121,4 +166,3 @@ const playBackwards = function (video) {
   <script src="ui.js"></script>
 </body>
 </html>
-

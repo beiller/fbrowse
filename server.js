@@ -127,7 +127,7 @@ app.get('/list', (req, res) => {
       };
     })
     // console.log(files.slice(0, 5));
-    files.sort((a, b) => ((b.up - b.down) - (a.up - a.down)) || (a.modified - b.modified) * -1.0)
+    files.sort((a, b) => (a.modified - b.modified) * -1.0)
     //files.reverse();
 
 
@@ -181,6 +181,165 @@ app.get('/scored', (req, res) => {
   out.sort((a, b) => ((b.up - b.down) - (a.up - a.down)) || (a.modified - b.modified) * -1.0);
   res.json({ files: out });
 });
+
+const PLAYLISTS_FILE = process.env.FBROWSE_PLAYLISTS_FILE || path.join(os.homedir(), '.cache', 'fbrowse', 'playlists.json');
+
+let playlists = new Map();
+
+
+function loadPlaylists() {
+
+  try {
+
+    const data = JSON.parse(fs.readFileSync(PLAYLISTS_FILE, 'utf8'));
+
+    for (const [k, v] of Object.entries(data)) playlists.set(k, v);
+
+  } catch (e) {}
+
+}
+
+
+function savePlaylists() {
+
+  const obj = {};
+
+  for (const [k, v] of playlists) obj[k] = v;
+
+  const tmp = PLAYLISTS_FILE + '.' + process.pid + '.tmp';
+
+  fs.mkdirSync(path.dirname(PLAYLISTS_FILE), { recursive: true });
+
+  fs.writeFileSync(tmp, JSON.stringify(obj));
+
+  fs.renameSync(tmp, PLAYLISTS_FILE);
+
+}
+
+
+loadPlaylists();
+
+
+function validRel(rel) {
+
+  const abs = path.resolve(BASE_DIR, '.' + (rel.startsWith('/') ? rel : '/' + rel));
+
+  return abs.startsWith(BASE_DIR + path.sep) ? rel : null;
+
+}
+
+
+app.get('/playlists', (req, res) => {
+
+  const out = [];
+
+  for (const [name, p] of playlists) out.push({ name, created: p.created || 0, files: p.files || [] });
+
+  out.sort((a, b) => a.name.localeCompare(b.name));
+
+  res.json({ playlists: out });
+
+});
+
+
+app.post('/playlists', (req, res) => {
+
+  const name = ((req.body && req.body.name) || '').trim();
+
+  if (!name) return res.status(400).json({ error: 'bad name' });
+
+  if (playlists.has(name)) return res.status(409).json({ error: 'exists' });
+
+  playlists.set(name, { name, created: Date.now(), files: [] });
+
+  savePlaylists();
+
+  res.json({ ok: true });
+
+});
+
+
+app.delete('/playlists', (req, res) => {
+
+  const name = decodeURIComponent(req.query.name || '');
+
+  if (!playlists.has(name)) return res.status(404).json({ error: 'not found' });
+
+  playlists.delete(name);
+
+  savePlaylists();
+
+  res.json({ ok: true });
+
+});
+
+
+app.post('/playlists/add', (req, res) => {
+
+  const name = req.body && req.body.name;
+
+  const rel = validRel((req.body && req.body.path) || '');
+
+  const p = playlists.get(name);
+
+  if (!p || !rel) return res.status(400).json({ error: 'bad request' });
+
+  if (p.files.includes(rel)) return res.json({ files: p.files });
+
+  p.files.push(rel);
+
+  savePlaylists();
+
+  res.json({ files: p.files });
+
+});
+
+
+app.post('/playlists/remove', (req, res) => {
+
+  const name = req.body && req.body.name;
+
+  const rel = validRel((req.body && req.body.path) || '');
+
+  const p = playlists.get(name);
+
+  if (!p || !rel) return res.status(400).json({ error: 'bad request' });
+
+  p.files = p.files.filter(f => f !== rel);
+
+  savePlaylists();
+
+  res.json({ files: p.files });
+
+});
+
+
+app.post('/playlists/move', (req, res) => {
+
+  const name = req.body && req.body.name;
+
+  const from = parseInt(req.body && req.body.from);
+
+  const to = parseInt(req.body && req.body.to);
+
+  const p = playlists.get(name);
+
+  if (!p || isNaN(from) || isNaN(to) || from < 0 || to < 0 || from >= p.files.length || to >= p.files.length) {
+
+    return res.status(400).json({ error: 'bad request' });
+
+  }
+
+  const [f] = p.files.splice(from, 1);
+
+  p.files.splice(to, 0, f);
+
+  savePlaylists();
+
+  res.json({ files: p.files });
+
+});
+
 
 app.listen(3000, '0.0.0.0', () => {
   console.log('Server running at http://0.0.0.0:3000');

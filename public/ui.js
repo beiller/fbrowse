@@ -17,6 +17,10 @@ let imgSlideshowDelay = 5000;
 let skipImages = true;
 let playDirection = 0;
 let imgSlideshowTimer = null;
+let controlsVisible = false;
+let controlsHideTimer = null;
+const CONTROLS_HIDE_DELAY = 3000;
+const autoFullscreenCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
 
 
 /*
@@ -110,6 +114,8 @@ function fetchList(path) {
         });
 }
 let inFavMode = false;
+let inPlaylistMode = false;
+let playlistName = null;
 
 function toggleFavouriteView() {
     if (!inFavMode) {
@@ -126,22 +132,48 @@ function toggleFavouriteView() {
     }
 }
 
-function playpauseVideoTap(click) {
-    let thumb = click.target;
-    console.log(thumb);
-    if (thumb.paused) {
-        thumb.play()
-    } else {
-        thumb.pause()
-    }
+function togglePlayPause() {
+    const v = getHTMLVideoElement();
+    if (!v) return;
+    if (v.paused) { v.play().catch(() => {}); } else { v.pause(); }
+    setControlsVisible(true);
 }
+
+function scheduleControlsHide() {
+    if (controlsHideTimer) clearTimeout(controlsHideTimer);
+    controlsHideTimer = setTimeout(() => setControlsVisible(false), CONTROLS_HIDE_DELAY);
+}
+
+function setControlsVisible(show) {
+    const c = document.querySelector('.controls');
+    if (!c) return;
+    controlsVisible = show;
+    c.classList.toggle('hidden', !show);
+    if (show) { scheduleControlsHide(); }
+    else if (controlsHideTimer) { clearTimeout(controlsHideTimer); controlsHideTimer = null; }
+}
+
+function onOverlayClick(e) {
+    if (e.target.closest && e.target.closest('.controls')) return;
+    setControlsVisible(!controlsVisible);
+}
+
+function onActivity() {
+    if (controlsVisible) scheduleControlsHide();
+}
+
+function fileDirOf(f) {
+    if (inPlaylistMode || inFavMode) return pathJoin('/', f.id.split('/').slice(0, -1).join('/'));
+    return currentPath;
+}
+
 
 function renderGrid() {
     const grid = document.getElementById('grid');
     grid.innerHTML = '';
     files.forEach((f, i) => {
         const el = document.createElement('div');
-        const fileDir = inFavMode ? pathJoin('/', f.id.split('/').slice(0, -1).join('/')) : currentPath;
+        const fileDir = fileDirOf(f);
         if (getFilterType() && !getFilterType()(f.name)) return;
         if (f.type === 1 && !inFavMode) {
             const thumb = document.createElement('div');
@@ -150,7 +182,7 @@ function renderGrid() {
             thumb.onclick = () => fetchList(pathJoin(fileDir, f.name));
             el.appendChild(thumb);
 
-        } else if (inFavMode && !isMedia(f.name)) {
+        } else if ((inFavMode || inPlaylistMode) && !isMedia(f.name)) {
             const thumb = document.createElement('div');
             thumb.className = 'thumb';
             thumb.textContent = `${f.name} (missing?)`;
@@ -168,10 +200,20 @@ function renderGrid() {
             }
             thumb.setAttribute('data-tag', 'img');
             thumb.className = 'thumb';
+            if (inPlaylistMode) {
+                const idx = playlistItems.findIndex(p => p.id === f.id);
+                if (idx >= 0) { thumb.draggable = true; thumb.dataset.idx = String(idx); }
+            }
             thumb.onclick = () => openFullscreen(i);
             el.appendChild(thumb);
             observer.observe(thumb);
             addVoteUI(el, f, pathJoin(fileDir, f.name));
+            if (inPlaylistMode) {
+                const idx = playlistItems.findIndex(p => p.id === f.id);
+                if (idx >= 0) addRemoveFromPlaylistUI(el, idx);
+            } else {
+                addAddToPlaylistUI(el, pathJoin(fileDir, f.name));
+            }
         }
         grid.appendChild(el);
     });
@@ -224,6 +266,11 @@ function paintVotes(el, f) {
 }
 
 
+function resortFiles() {
+    files.sort((a, b) => ((b.up - b.down) - (a.up - a.down)) || (a.modified - b.modified) * -1.0);
+}
+
+
 function castVote(f, v, el) {
     const key = el._voteKey;
     const prev = { up: f.up || 0, down: f.down || 0, my: f.my || 0 };
@@ -236,10 +283,10 @@ function castVote(f, v, el) {
         body: JSON.stringify({ path: key, v })
     }).then(r => r.json()).then(data => {
         Object.assign(f, data);
-        paintVotes(el, f);
+        if (inFavMode) { resortFiles(); renderGrid(); } else { paintVotes(el, f); }
     }).catch(() => {
         Object.assign(f, prev);
-        paintVotes(el, f);
+        if (inFavMode) { resortFiles(); renderGrid(); } else { paintVotes(el, f); }
         alert('Vote failed');
     });
 }
@@ -271,19 +318,17 @@ function addVoteUI(el, f, key) {
 
 
 const playbackEnded = (e) => {
-    console.log("ended");
-    if (playDirection == 1) {
-        e.target.removeEventListener("ended", playbackEnded);
+    const t = e.target;
+    if (t.tagName === 'IMG') {
         next();
-    } else if(playDirection == -1) {
-        e.target.removeEventListener("ended", playbackEnded);
+        return;
+    }
+    if (playDirection == 1) {
+        next();
+    } else if (playDirection == -1) {
         prev();
     } else {
-        try {
-            e.target.play()
-        } catch(e) {
-            console.error(e);
-        }
+        try { t.play(); } catch (err) { console.error(err); }
     }
 }
 
@@ -295,7 +340,7 @@ function openFullscreen(index) {
     requestWakeLock();
     currentIndex = index;
     const file = files[currentIndex];
-    const fileDir = inFavMode ? pathJoin('/', file.id.split('/').slice(0, -1).join('/')) : currentPath;
+    const fileDir = fileDirOf(file);
     const container = document.querySelector('.media-container');
     let el = null;
     if (container.firstChild && container.firstChild.tagName == "VIDEO" && isVideo(file.name)) {
@@ -315,14 +360,11 @@ function openFullscreen(index) {
         clearTimeout(imgSlideshowTimer);
         imgSlideshowTimer = null;
     }
-    el._file = file;
     el.src = `/media${pathJoin(fileDir, file.name)}`;
     if (el.tagName === 'VIDEO') {
         el.controls = false;
         el.loop = false;
         el.autoplay = true;
-        el.removeEventListener("click", playpauseVideoTap);
-        el.addEventListener("click", playpauseVideoTap, false);
     } else if (el.tagName === 'IMG') {
         imgSlideshowTimer = setTimeout(() => {
             playbackEnded({ target: el });
@@ -330,57 +372,52 @@ function openFullscreen(index) {
     }
 
     document.getElementById('fullscreen').style.display = 'flex';
-    if (enableFullscreen) {
-        document.getElementById('fullscreen').requestFullscreen();
+    setControlsVisible(true);
+    if (enableFullscreen || autoFullscreenCoarse) {
+        const p = document.getElementById('fullscreen').requestFullscreen();
+        if (p && p.catch) p.catch(() => {});
     }
 }
 function exitFullscreenMode() {
     const container = document.querySelector('.media-container');
     container.innerHTML = '';
+    if (imgSlideshowTimer !== null) { clearTimeout(imgSlideshowTimer); imgSlideshowTimer = null; }
+    setControlsVisible(false);
     document.getElementById('fullscreen').style.display = 'none';
     currentIndex = -1;
     if (document.fullscreenElement) {
         document.exitFullscreen();
     }
-    
     releaseWakeLock();
-}
-
-function resetPlaylist(index) {
-    currentIndex = index || 0
 }
 
 function next() {
     for (let i = currentIndex + 1; i < files.length; i++) {
-        if (isMedia(files[i].name)) {
-            if (skipImages && isImage(files[i].name)) {
-                //Im not smart enough
-                continue;
-            } else {
-                return openFullscreen(i);
-            }
-        }
+        if (!isMedia(files[i].name)) continue;
+        if (skipImages && isImage(files[i].name)) continue;
+        return openFullscreen(i);
     }
     if (enableLoop) {
-        resetPlaylist(0);
-        openFullscreen(currentIndex);
+        for (let i = 0; i < files.length; i++) {
+            if (!isMedia(files[i].name)) continue;
+            if (skipImages && isImage(files[i].name)) continue;
+            return openFullscreen(i);
+        }
     }
 }
 
 function prev() {
     for (let i = currentIndex - 1; i >= 0; i--) {
-        if (isMedia(files[i].name)) {
-            if (skipImages && isImage(files[i].name)) {
-                //Im not smart enough
-                continue;
-            } else {
-                return openFullscreen(i);
-            }
-        }
+        if (!isMedia(files[i].name)) continue;
+        if (skipImages && isImage(files[i].name)) continue;
+        return openFullscreen(i);
     }
     if (enableLoop) {
-        resetPlaylist(files.length - 1);
-        openFullscreen(currentIndex);
+        for (let i = files.length - 1; i >= 0; i--) {
+            if (!isMedia(files[i].name)) continue;
+            if (skipImages && isImage(files[i].name)) continue;
+            return openFullscreen(i);
+        }
     }
 }
 
@@ -392,6 +429,8 @@ document.getElementById('upBtn').onclick = () => {
 
 document.getElementById('vBtn').onclick = () => {
     inFavMode = false;
+    inPlaylistMode = false;
+    playlistName = null;
     setFilterType(isVideo);
     renderGrid();
 };
@@ -399,6 +438,8 @@ document.getElementById('vBtn').onclick = () => {
 
 document.getElementById('iBtn').onclick = () => {
     inFavMode = false;
+    inPlaylistMode = false;
+    playlistName = null;
     setFilterType(isImage);
     renderGrid();
 };
@@ -410,11 +451,226 @@ const toggleForwardsRepeat = () => {
     else if(playDirection == 1) {
         playDirection = 0
     }
+    const b = document.getElementById('repeatBtn');
+    if (b) b.classList.toggle('active', playDirection === 1);
 }
 
 const toggleSkipImages = () => {
     skipImages = !skipImages
 }
+
+const fsEl = document.getElementById('fullscreen');
+fsEl.addEventListener('click', onOverlayClick);
+fsEl.addEventListener('mousemove', onActivity);
+fsEl.addEventListener('touchmove', onActivity, { passive: true });
+
+document.addEventListener('keydown', (e) => {
+    if (document.getElementById('fullscreen').style.display !== 'flex') return;
+    switch (e.key) {
+        case 'Escape': exitFullscreenMode(); break;
+        case 'ArrowLeft': prev(); break;
+        case 'ArrowRight': next(); break;
+        case ' ': e.preventDefault(); togglePlayPause(); break;
+    }
+});
+
+document.getElementById('playBtn').onclick = () => {
+    if (inPlaylistMode) {
+        inPlaylistMode = false;
+        playlistName = null;
+        fetchList(currentPath);
+    } else {
+        openPlaylistPicker(null, null);
+    }
+};
+
+
+let playlistItems = [];
+
+function enterPlaylist(name) {
+    fetch('/playlists')
+        .then(r => r.json())
+        .then(data => {
+            const p = data.playlists.find(x => x.name === name);
+            if (!p) return;
+            inFavMode = false;
+            inPlaylistMode = true;
+            playlistName = name;
+            setFilterType(null);
+            playlistItems = p.files.map(rel => ({ id: rel, name: rel.split('/').pop() }));
+            files = playlistItems.slice();
+            renderGrid();
+        });
+}
+
+
+function addAddToPlaylistUI(el, key) {
+    const b = document.createElement('button');
+    b.className = 'pladd';
+    b.textContent = '+';
+    b.onclick = (e) => { e.stopPropagation(); openPlaylistPicker(key, null); };
+    el.appendChild(b);
+}
+
+
+function addRemoveFromPlaylistUI(el, idx) {
+    const b = document.createElement('button');
+    b.className = 'plrem';
+    b.textContent = '\u2715';
+    b.onclick = (e) => { e.stopPropagation(); removeFromPlaylist(playlistName, playlistItems[idx].id); };
+    el.appendChild(b);
+}
+
+
+function removeFromPlaylist(name, rel) {
+    fetch('/playlists/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, path: rel })
+    }).then(r => r.json()).then(data => {
+        playlistItems = data.files.map(rel2 => ({ id: rel2, name: rel2.split('/').pop() }));
+        files = playlistItems.slice();
+        renderGrid();
+    });
+}
+
+
+function addToPlaylist(name, rel) {
+    fetch('/playlists/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, path: rel })
+    }).then(r => r.json()).then(data => {
+        if (inPlaylistMode && playlistName === name) {
+            playlistItems = data.files.map(rel2 => ({ id: rel2, name: rel2.split('/').pop() }));
+            files = playlistItems.slice();
+            renderGrid();
+        }
+    });
+}
+
+
+function openPlaylistPicker(targetRel, targetEl) {
+    const ov = document.createElement('div');
+    ov.className = 'plpick-ov';
+    const box = document.createElement('div');
+    box.className = 'plpick-box';
+    const title = document.createElement('div');
+    title.className = 'plpick-title';
+    title.textContent = targetRel ? 'Add to playlist' : 'Playlists';
+    box.appendChild(title);
+    const list = document.createElement('div');
+    list.className = 'plpick-list';
+    box.appendChild(list);
+    const row = document.createElement('div');
+    row.className = 'plpick-row';
+    const inp = document.createElement('input');
+    inp.placeholder = 'New playlist name';
+    const createB = document.createElement('button');
+    createB.textContent = 'Create';
+    createB.onclick = () => {
+        const n = inp.value.trim();
+        if (!n) return;
+        fetch('/playlists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: n }) })
+            .then(r => r.json()).then(() => {
+                inp.value = '';
+                renderList();
+                if (targetRel) addToPlaylist(n, targetRel);
+            }).catch(() => alert('Could not create playlist'));
+    };
+    row.appendChild(inp);
+    row.appendChild(createB);
+    box.appendChild(row);
+    const closeB = document.createElement('button');
+    closeB.className = 'plpick-close';
+    closeB.textContent = 'Close';
+    closeB.onclick = () => ov.remove();
+    box.appendChild(closeB);
+    ov.appendChild(box);
+    ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+    document.body.appendChild(ov);
+
+    function renderList() {
+        list.innerHTML = '';
+        fetch('/playlists').then(r => r.json()).then(data => {
+            for (const p of data.playlists) {
+                const item = document.createElement('div');
+                item.className = 'plpick-item';
+                const nm = document.createElement('span');
+                nm.textContent = p.name + ' (' + p.files.length + ')';
+                nm.onclick = () => { ov.remove(); enterPlaylist(p.name); };
+                const addB = document.createElement('button');
+                addB.textContent = '+';
+                addB.disabled = !targetRel || p.files.includes(targetRel);
+                addB.onclick = () => addToPlaylist(p.name, targetRel);
+                const delB = document.createElement('button');
+                delB.textContent = 'del';
+                delB.onclick = () => {
+                    if (!confirm('Delete playlist ' + p.name + '?')) return;
+                    fetch('/playlists?name=' + encodeURIComponent(p.name), { method: 'DELETE' })
+                        .then(r => r.json()).then(renderList);
+                };
+                item.appendChild(nm);
+                item.appendChild(addB);
+                item.appendChild(delB);
+                list.appendChild(item);
+            }
+        });
+    }
+    renderList();
+}
+
+
+const gridEl = document.getElementById('grid');
+let dragIdx = null;
+
+gridEl.addEventListener('dragstart', (e) => {
+    const t = e.target.closest && e.target.closest('.thumb[data-idx]');
+    if (!t) return;
+    dragIdx = parseInt(t.dataset.idx);
+    e.dataTransfer.effectAllowed = 'move';
+});
+
+gridEl.addEventListener('dragover', (e) => {
+    if (dragIdx === null) return;
+    e.preventDefault();
+    const t = e.target.closest && e.target.closest('.thumb[data-idx]');
+    if (!t) return;
+    const r = t.getBoundingClientRect();
+    const before = (e.clientX - r.left) < r.width / 2;
+    t.classList.toggle('drop-before', before);
+    t.classList.toggle('drop-after', !before);
+});
+
+gridEl.addEventListener('dragleave', (e) => {
+    const t = e.target.closest && e.target.closest('.thumb');
+    if (t) t.classList.remove('drop-before', 'drop-after');
+});
+
+gridEl.addEventListener('drop', (e) => {
+    if (dragIdx === null) return;
+    e.preventDefault();
+    const from = dragIdx;
+    dragIdx = null;
+    document.querySelectorAll('.thumb').forEach(t => t.classList.remove('drop-before', 'drop-after'));
+    const t = e.target.closest && e.target.closest('.thumb[data-idx]');
+    if (!t) return;
+    let to = parseInt(t.dataset.idx);
+    const r = t.getBoundingClientRect();
+    if ((e.clientX - r.left) >= r.width / 2) to++;
+    if (from < to) to--;
+    if (to === from) return;
+    const a = playlistItems.splice(from, 1)[0];
+    playlistItems.splice(to, 0, a);
+    files = playlistItems.slice();
+    renderGrid();
+    fetch('/playlists/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: playlistName, from, to })
+    }).catch(() => enterPlaylist(playlistName));
+});
+
 
 fetchList('/');
 
