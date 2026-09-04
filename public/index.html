@@ -152,16 +152,72 @@
 
     .plpick-box button { min-height: 30px; border: none; border-radius: 4px; cursor: pointer; background: #3a3a3a; color: #fff; padding: 0 8px; }
 
+
+    #toolbar {
+      position: sticky; top: 0; z-index: 15;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 8px 10px;
+      background: #161616; border-bottom: 1px solid #2e2e2e;
+    }
+    .tb-group { display: flex; align-items: center; gap: 6px; }
+    .tb-nav { flex: 1 1 auto; min-width: 0; }
+    #upBtn {
+      width: 40px; height: 40px; flex: none;
+      font-size: 17px; line-height: 1;
+      border: 1px solid #3a3a3a; border-radius: 8px;
+      background: #232323; color: #fff; cursor: pointer;
+    }
+    #upBtn:disabled { opacity: 0.35; cursor: default; }
+    .crumb {
+      font-size: 14px; color: #ddd; white-space: nowrap; overflow: hidden;
+      text-overflow: ellipsis; min-width: 0;
+    }
+    .tb-seg {
+      background: #232323; border: 1px solid #3a3a3a; border-radius: 8px;
+      padding: 3px; gap: 2px;
+    }
+    .segbtn {
+      min-width: 52px; height: 34px; padding: 0 10px;
+      font-size: 12px; letter-spacing: 0.5px; font-weight: 600;
+      border: none; border-radius: 5px;
+      background: transparent; color: #aaa; cursor: pointer;
+    }
+    .segbtn.active { background: #3d3d3d; color: #fff; }
+    .tb-actions { margin-left: auto; }
+    #favBtn, #playBtn {
+      min-height: 40px; padding: 0 12px;
+      font-size: 13px; font-weight: 600; letter-spacing: 0.5px;
+      border: 1px solid #3a3a3a; border-radius: 8px;
+      background: #232323; color: #fff; cursor: pointer;
+    }
+    #favBtn.active { background: rgba(46, 204, 113, 0.18); color: #2ecc71; box-shadow: inset 0 0 0 1px #2ecc71; }
+    #playBtn.active { background: rgba(46, 204, 113, 0.18); color: #2ecc71; box-shadow: inset 0 0 0 1px #2ecc71; }
+    @media (max-width: 560px) {
+      #toolbar { gap: 6px; padding: 6px 8px; }
+      .tb-actions { margin-left: 0; width: 100%; justify-content: space-between; }
+      #favBtn, #playBtn { flex: 1; }
+      .crumb { font-size: 13px; }
+    }
+
   </style>
 </head>
 <body>
 
-  <button id="upBtn">⬆️ Up</button>
-  <button id="vBtn">⬆️ Video</button>
-  <button id="iBtn">⬆️ Image</button>
-  <button id="fBtn">ALL</button>
-  <button onclick="toggleFavouriteView()">FAV</button>
-  <button id="playBtn">&#9654; PLAY</button>
+  <div id="toolbar">
+    <div class="tb-group tb-nav">
+      <button id="upBtn" title="Go up one directory">⬆️</button>
+      <span id="crumb" class="crumb" title=""></span>
+    </div>
+    <div class="tb-group tb-seg">
+      <button id="fBtn" class="segbtn active" data-filter="all">ALL</button>
+      <button id="vBtn" class="segbtn" data-filter="video">VIDEO</button>
+      <button id="iBtn" class="segbtn" data-filter="image">IMAGE</button>
+    </div>
+    <div class="tb-group tb-actions">
+      <button id="favBtn" title="Show voted favourites">★ FAV</button>
+      <button id="playBtn" title="Open playlists">◆ PLAYLISTS</button>
+    </div>
+  </div>
   <div id="grid" class="grid"></div>
 
   <div id="fullscreen" class="fullscreen">

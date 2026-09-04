@@ -103,6 +103,21 @@ const observer = new IntersectionObserver(entries => {
 });
 
 
+function renderToolbar() {
+    const crumb = document.getElementById('crumb');
+    const label = currentPath === '/' ? '\ud83d\udcc1 /' : '\ud83d\udcc1 ' + currentPath;
+    crumb.textContent = label;
+    crumb.title = currentPath;
+    document.getElementById('upBtn').disabled = currentPath === '/';
+    const fB = document.getElementById('fBtn'), vB = document.getElementById('vBtn'), iB = document.getElementById('iBtn');
+    fB.classList.toggle('active', !inFavMode && !inPlaylistMode && filterType === null);
+    vB.classList.toggle('active', !inFavMode && !inPlaylistMode && filterType === isVideo);
+    iB.classList.toggle('active', !inFavMode && !inPlaylistMode && filterType === isImage);
+    document.getElementById('favBtn').classList.toggle('active', inFavMode);
+    document.getElementById('playBtn').classList.toggle('active', inPlaylistMode);
+}
+
+
 function fetchList(path) {
     fetch(`/list?path=${encodeURIComponent(path)}`)
         .then(res => res.json())
@@ -110,6 +125,7 @@ function fetchList(path) {
             currentPath = data.currentPath;
             files = data.files.map(f => ({ ...f, id: pathJoin(currentPath, f.name) }));
             renderGrid();
+            renderToolbar();
         });
 }
 let inFavMode = false;
@@ -118,18 +134,23 @@ let playlistName = null;
 
 function toggleFavouriteView() {
     if (!inFavMode) {
+        inPlaylistMode = false;
+        playlistName = null;
         inFavMode = true;
         fetch('/scored')
             .then(res => res.json())
             .then(data => {
                 files = data.files.map(f => ({ ...f, id: f.path }));
                 renderGrid();
+                renderToolbar();
             });
     } else {
         inFavMode = false;
         fetchList(currentPath);
     }
 }
+
+document.getElementById('favBtn').onclick = toggleFavouriteView;
 
 function togglePlayPause() {
     const v = getHTMLVideoElement();
@@ -439,30 +460,33 @@ document.getElementById('upBtn').onclick = () => {
     fetchList('/' + parts.join('/'));
 };
 
-document.getElementById('vBtn').onclick = () => {
+const exitSpecialViews = () => {
     inFavMode = false;
     inPlaylistMode = false;
     playlistName = null;
+};
+
+document.getElementById('vBtn').onclick = () => {
+    exitSpecialViews();
     setFilterType(isVideo);
     renderGrid();
+    renderToolbar();
 };
 
 
 document.getElementById('iBtn').onclick = () => {
-    inFavMode = false;
-    inPlaylistMode = false;
-    playlistName = null;
+    exitSpecialViews();
     setFilterType(isImage);
     renderGrid();
+    renderToolbar();
 };
 
 
 document.getElementById('fBtn').onclick = () => {
-    inFavMode = false;
-    inPlaylistMode = false;
-    playlistName = null;
+    exitSpecialViews();
     setFilterType(null);
     renderGrid();
+    renderToolbar();
 };
 
 const toggleForwardsRepeat = () => {
@@ -522,6 +546,7 @@ document.getElementById('playBtn').onclick = () => {
     } else {
         openPlaylistPicker(null, null);
     }
+    renderToolbar();
 };
 
 
@@ -540,6 +565,7 @@ function enterPlaylist(name) {
             playlistItems = p.files.map(rel => ({ id: rel, name: rel.split('/').pop() }));
             files = playlistItems.slice();
             renderGrid();
+            renderToolbar();
         });
 }
 
