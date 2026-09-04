@@ -15,7 +15,7 @@ let enableFullscreen = false;
 let enableLoop = true;
 let imgSlideshowDelay = 5000;
 let skipImages = true;
-let playDirection = 0;
+let playDirection = 1;
 let imgSlideshowTimer = null;
 let controlsVisible = false;
 let controlsHideTimer = null;
@@ -29,7 +29,6 @@ const autoFullscreenCoarse = window.matchMedia && window.matchMedia('(pointer: c
 */
 
 
-window.localStorage.removeItem('');
 const setFilterType = (newval) => { filterType = newval }
 const getFilterType = () => filterType
 const setEnableFullscreen = (newval) => { enableFullscreen = newval }
@@ -149,12 +148,22 @@ function setControlsVisible(show) {
     if (!c) return;
     controlsVisible = show;
     c.classList.toggle('hidden', !show);
+    const pb = document.querySelector('.plpick-fsbtn');
+    if (pb) pb.classList.toggle('hidden', !show);
     if (show) { scheduleControlsHide(); }
     else if (controlsHideTimer) { clearTimeout(controlsHideTimer); controlsHideTimer = null; }
 }
 
 function onOverlayClick(e) {
     if (e.target.closest && e.target.closest('.controls')) return;
+    if (e.target.closest && e.target.closest('button')) return;
+    const mc = e.target.closest && e.target.closest('.media-container');
+    if (mc) {
+        const v = getHTMLVideoElement();
+        if (v) { togglePlayPause(); }
+        else { next(); }
+        return;
+    }
     setControlsVisible(!controlsVisible);
 }
 
@@ -215,7 +224,7 @@ function renderGrid() {
                 addAddToPlaylistUI(el, pathJoin(fileDir, f.name));
             }
         }
-        grid.appendChild(el);
+        if (el.childNodes.length > 0) grid.appendChild(el);
     });
 }
 
@@ -243,12 +252,10 @@ function nextVoteState(cur, v) {
         else if (s.my < 0) s.down += s.my;
         s.my = 0;
     } else {
-        if (v === 1) {
-            if (s.my < 0) s.down--; else s.up++;
-        } else {
-            if (s.my > 0) s.up--; else s.down++;
-        }
-        s.my += v;
+        if (s.my > 0) s.up--;
+        else if (s.my < 0) s.down--;
+        if (v === 1) s.up++; else s.down++;
+        s.my = v;
     }
     return s;
 }
@@ -323,13 +330,7 @@ const playbackEnded = (e) => {
         next();
         return;
     }
-    if (playDirection == 1) {
-        next();
-    } else if (playDirection == -1) {
-        prev();
-    } else {
-        try { t.play(); } catch (err) { console.error(err); }
-    }
+    next();
 }
 
 function getHTMLVideoElement() {
@@ -363,7 +364,7 @@ function openFullscreen(index) {
     el.src = `/media${pathJoin(fileDir, file.name)}`;
     if (el.tagName === 'VIDEO') {
         el.controls = false;
-        el.loop = false;
+        el.loop = playDirection === 1;
         el.autoplay = true;
     } else if (el.tagName === 'IMG') {
         imgSlideshowTimer = setTimeout(() => {
@@ -371,6 +372,17 @@ function openFullscreen(index) {
         }, imgSlideshowDelay)
     }
 
+    if (!inPlaylistMode) {
+        const plb = document.createElement('button');
+        plb.className = 'plpick-fsbtn';
+        plb.textContent = '+\u2615';
+        plb.title = 'Add to playlist';
+        plb.onclick = (e) => { e.stopPropagation(); openPlaylistPicker(pathJoin(fileDir, file.name), plb); };
+        container.appendChild(plb);
+    }
+
+    const rb = document.getElementById('repeatBtn');
+    if (rb) rb.classList.toggle('active', playDirection === 1);
     document.getElementById('fullscreen').style.display = 'flex';
     setControlsVisible(true);
     if (enableFullscreen || autoFullscreenCoarse) {
@@ -444,15 +456,21 @@ document.getElementById('iBtn').onclick = () => {
     renderGrid();
 };
 
+
+document.getElementById('fBtn').onclick = () => {
+    inFavMode = false;
+    inPlaylistMode = false;
+    playlistName = null;
+    setFilterType(null);
+    renderGrid();
+};
+
 const toggleForwardsRepeat = () => {
-    if(playDirection == 0) {
-        playDirection = 1
-    }
-    else if(playDirection == 1) {
-        playDirection = 0
-    }
+    playDirection = playDirection === 1 ? 0 : 1;
     const b = document.getElementById('repeatBtn');
     if (b) b.classList.toggle('active', playDirection === 1);
+    const v = getHTMLVideoElement();
+    if (v) v.loop = playDirection === 1;
 }
 
 const toggleSkipImages = () => {
@@ -463,6 +481,28 @@ const fsEl = document.getElementById('fullscreen');
 fsEl.addEventListener('click', onOverlayClick);
 fsEl.addEventListener('mousemove', onActivity);
 fsEl.addEventListener('touchmove', onActivity, { passive: true });
+let fsTouchStart = null;
+fsEl.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) fsTouchStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+}, { passive: true });
+fsEl.addEventListener('touchend', (e) => {
+    if (!fsTouchStart) return;
+    const t = e.changedTouches[0];
+    const moved = Math.hypot(t.clientX - fsTouchStart.x, t.clientY - fsTouchStart.y);
+    fsTouchStart = null;
+    if (moved > 15) return;
+    const fake = { target: document.elementFromPoint(t.clientX, t.clientY) || fsEl };
+    if (fake.target.closest && fake.target.closest('.controls')) return;
+    if (fake.target.closest && fake.target.closest('button')) return;
+    const mc = fake.target.closest && fake.target.closest('.media-container');
+    if (mc) {
+        const v = getHTMLVideoElement();
+        if (v) { togglePlayPause(); }
+        else { next(); }
+        return;
+    }
+    setControlsVisible(!controlsVisible);
+}, { passive: true });
 
 document.addEventListener('keydown', (e) => {
     if (document.getElementById('fullscreen').style.display !== 'flex') return;
@@ -508,7 +548,7 @@ function addAddToPlaylistUI(el, key) {
     const b = document.createElement('button');
     b.className = 'pladd';
     b.textContent = '+';
-    b.onclick = (e) => { e.stopPropagation(); openPlaylistPicker(key, null); };
+    b.onclick = (e) => { e.stopPropagation(); openPlaylistPicker(key, b); };
     el.appendChild(b);
 }
 
@@ -551,8 +591,9 @@ function addToPlaylist(name, rel) {
 
 
 function openPlaylistPicker(targetRel, targetEl) {
+    const isDrop = !!targetRel;
     const ov = document.createElement('div');
-    ov.className = 'plpick-ov';
+    ov.className = 'plpick-ov' + (isDrop ? ' plpick-ov-drop' : '');
     const box = document.createElement('div');
     box.className = 'plpick-box';
     const title = document.createElement('div');
@@ -576,7 +617,14 @@ function openPlaylistPicker(targetRel, targetEl) {
                 inp.value = '';
                 renderList();
                 if (targetRel) addToPlaylist(n, targetRel);
-            }).catch(() => alert('Could not create playlist'));
+            }).catch(async () => {
+                let msg = 'Could not create playlist';
+                try {
+                    const d = await fetch('/playlists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: n }) }).then(r => r.json());
+                    if (d.error) msg = 'Could not create playlist: ' + d.error;
+                } catch (e) {}
+                alert(msg);
+            });
     };
     row.appendChild(inp);
     row.appendChild(createB);
@@ -589,6 +637,24 @@ function openPlaylistPicker(targetRel, targetEl) {
     ov.appendChild(box);
     ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
     document.body.appendChild(ov);
+    if (isDrop) {
+        const r = targetEl.getBoundingClientRect();
+        const bw = box.offsetWidth, bh = box.offsetHeight;
+        let left = Math.min(r.right - bw, window.innerWidth - bw - 8);
+        left = Math.max(8, left);
+        let top = r.bottom + 4;
+        if (top + bh > window.innerHeight - 8) top = Math.max(8, r.top - bh - 4);
+        box.style.left = left + 'px';
+        box.style.top = top + 'px';
+        const cleanup = () => {
+            document.removeEventListener('keydown', onKey);
+            document.removeEventListener('mousedown', onDown);
+        };
+        const onKey = (e) => { if (e.key === 'Escape') { cleanup(); ov.remove(); } };
+        const onDown = (e) => { if (!box.contains(e.target)) { cleanup(); ov.remove(); } };
+        document.addEventListener('keydown', onKey);
+        document.addEventListener('mousedown', onDown);
+    }
 
     function renderList() {
         list.innerHTML = '';
