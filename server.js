@@ -1,25 +1,78 @@
+#!/usr/bin/env node
 const express = require('express');
-
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
-const crypto = require('crypto');
 const os = require('os');
-const { execFile } = require('child_process');
+const crypto = require('crypto');
+const { execFile, execFileSync } = require('child_process');
+const { parseArgs } = require('util');
+
+function findFfmpeg() {
+  try {
+    const out = execFileSync('ffmpeg', ['-version'], { stdio: 'pipe' }).toString();
+    if (out.includes('ffmpeg version')) return 'ffmpeg';
+  } catch (e) {}
+  try { return require('ffmpeg-static'); } catch (e) { return null; }
+}
+
+let cli = {};
+try {
+  ({ values: cli } = parseArgs({
+    options: {
+      dir: { type: 'string' },
+      port: { type: 'string' },
+      host: { type: 'string' },
+      thumb: { type: 'string' },
+      config: { type: 'string' },
+      help: { type: 'boolean', short: 'h' }
+    }
+  }));
+} catch (e) {
+  console.error(e.message);
+  process.exit(1);
+}
+
+if (cli.help) {
+  console.log(`Usage: fbrowse [options]
+
+Options:
+  --dir <path>     Base directory to browse (env FBROWSE_BASE_DIR)
+  --port <port>    Port to listen on (env FBROWSE_PORT)
+  --host <host>    Interface to bind: localhost, 127.0.0.1, 0.0.0.0, etc. (env FBROWSE_HOST)
+  --thumb <path>   Thumbnail cache directory (env FBROWSE_THUMB_DIR)
+  --config <path>  Config file (default ~/.config/fbrowse/config.json)
+  -h, --help       Show this help
+
+Precedence: CLI flags > environment variables > config file > defaults.`);
+  process.exit(0);
+}
+
+const CONFIG_FILE = path.resolve(cli.config || process.env.FBROWSE_CONFIG || path.join(os.homedir(), '.config', 'fbrowse', 'config.json'));
+
+function loadConfigFile() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); } catch (e) { return {}; }
+}
+
+const cfg = loadConfigFile();
+
+const BASE_DIR = path.resolve(cli.dir || process.env.FBROWSE_BASE_DIR || cfg.baseDir || process.cwd());
+const PORT = parseInt(cli.port || process.env.FBROWSE_PORT || cfg.port || '3000', 10);
+const HOST = cli.host || process.env.FBROWSE_HOST || cfg.host || 'localhost';
+const THUMB_DIR = path.resolve(cli.thumb || process.env.FBROWSE_THUMB_DIR || cfg.thumbDir || path.join(os.homedir(), '.cache', 'fbrowse', 'thumbs'));
+const VOTE_FILE = path.resolve(process.env.FBROWSE_VOTE_FILE || cfg.voteFile || path.join(os.homedir(), '.cache', 'fbrowse', 'votes.json'));
+const PLAYLISTS_FILE = path.resolve(process.env.FBROWSE_PLAYLISTS_FILE || cfg.playlistsFile || path.join(os.homedir(), '.cache', 'fbrowse', 'playlists.json'));
 
 const app = express();
-
-const BASE_DIR = process.env.FBROWSE_BASE_DIR || '/home/bill/src/ComfyUI/output';
-const PORT = parseInt(process.env.FBROWSE_PORT || '3000', 10);
 
 app.use('/media', express.static(BASE_DIR));
 app.use('/', express.static(__dirname + '/public'));
 app.use(express.json());
 
-const THUMB_DIR = process.env.FBROWSE_THUMB_DIR || path.join(os.homedir(), '.cache', 'fbrowse', 'thumbs');
 fs.mkdirSync(THUMB_DIR, { recursive: true });
 
-const VOTE_FILE = process.env.FBROWSE_VOTE_FILE || path.join(os.homedir(), '.cache', 'fbrowse', 'votes.json');
+const FFMPEG = findFfmpeg();
+if (!FFMPEG) console.warn('WARNING: no ffmpeg found on PATH or via ffmpeg-static; video thumbnails will not work');
 
 let votes = new Map();
 
@@ -50,7 +103,7 @@ function nextThumb() {
   const task = thumbQueue.shift();
   thumbActive++;
   fs.mkdirSync(THUMB_DIR, { recursive: true });
-  execFile('ffmpeg', ['-y', '-loglevel', 'error', '-i', task.abs, '-frames:v', '1', '-vf', 'scale=' + task.w + ':-2', '-q:v', '5', '-f', 'image2', task.tmp], (err, so, se) => {
+  execFile(FFMPEG, ['-y', '-loglevel', 'error', '-i', task.abs, '-frames:v', '1', '-vf', 'scale=' + task.w + ':-2', '-q:v', '5', '-f', 'image2', task.tmp], (err, so, se) => {
     thumbActive--;
     const waiters = thumbPending.get(task.key) || [];
     thumbPending.delete(task.key);
@@ -104,26 +157,17 @@ app.get('/thumb', (req, res) => {
   });
 });
 
-
 function isImage(name) {
   return name.match(/\.(jpg|jpeg|png|gif)$/i);
 }
-
-
 
 function isVideo(name) {
   return name.match(/\.(mp4|webm|mov)$/i);
 }
 
-
-
-
 function getType(name) {
   return isImage(name) ? 2 : isVideo(name) ? 3 : 4
 }
-
-
-
 
 app.get('/list', async (req, res) => {
   const queryPath = safeDecode(req.query.path || '/');
@@ -167,9 +211,6 @@ app.get('/list', async (req, res) => {
   });
 });
 
-
-
-
 app.post('/vote', (req, res) => {
   const body = req.body || {};
   const rel = safeDecode(body.path || '');
@@ -193,7 +234,6 @@ app.post('/vote', (req, res) => {
   res.json({ up: entry.up, down: entry.down, my: entry.my });
 });
 
-
 app.get('/scored', async (req, res) => {
   const out = [];
   for (const [rel, v] of votes) {
@@ -212,214 +252,101 @@ app.get('/scored', async (req, res) => {
   res.json({ files: out });
 });
 
-
-const PLAYLISTS_FILE = process.env.FBROWSE_PLAYLISTS_FILE || path.join(os.homedir(), '.cache', 'fbrowse', 'playlists.json');
-
-
 let playlists = new Map();
 
-
-
-
 function loadPlaylists() {
-
-
   try {
-
-
     const data = JSON.parse(fs.readFileSync(PLAYLISTS_FILE, 'utf8'));
-
-
     for (const [k, v] of Object.entries(data)) playlists.set(k, v);
-
-
   } catch (e) {}
-
-
 }
-
-
-
 
 function savePlaylists() {
-
-
   const obj = {};
-
-
   for (const [k, v] of playlists) obj[k] = v;
-
-
   const tmp = PLAYLISTS_FILE + '.' + process.pid + '.tmp';
-
-
   fs.mkdirSync(path.dirname(PLAYLISTS_FILE), { recursive: true });
-
-
   fs.writeFileSync(tmp, JSON.stringify(obj));
-
-
   fs.renameSync(tmp, PLAYLISTS_FILE);
-
-
 }
 
-
-
-
 loadPlaylists();
-
-
-
 
 function playlistNameOk(name) {
   return typeof name === 'string' && name.trim().length > 0 && name.length <= 100 &&
     !name.includes('\u0000') && !name.includes('/') && !name.includes('\\');
 }
 
-
 app.get('/playlists', (req, res) => {
-
-
   const out = [];
-
-
   for (const [name, p] of playlists) out.push({ name, created: p.created || 0, files: p.files || [] });
-
-
   out.sort((a, b) => a.name.localeCompare(b.name));
-
-
   res.json({ playlists: out });
-
-
 });
 
-
-
 app.post('/playlists', (req, res) => {
-
-
   const raw = (req.body && req.body.name) || '';
   const name = safeDecode(raw);
   if (!playlistNameOk(name)) return res.status(400).json({ error: 'bad name' });
   const trimmed = name.trim();
   if (playlists.has(trimmed)) return res.status(409).json({ error: 'exists' });
 
-
   playlists.set(trimmed, { name: trimmed, created: Date.now(), files: [] });
-
-
   savePlaylists();
-
-
   res.json({ ok: true });
-
-
 });
 
-
-
 app.delete('/playlists', (req, res) => {
-
-
   const name = safeDecode(req.query.name || '');
   if (name === null || !playlists.has(name)) return res.status(404).json({ error: 'not found' });
 
-
   playlists.delete(name);
-
-
   savePlaylists();
-
-
   res.json({ ok: true });
-
-
 });
-
-
 
 app.post('/playlists/add', (req, res) => {
-
-
   const body = req.body || {};
   const name = safeDecode(body.name || '');
   const rel = name === null ? null : validRel(safeDecode(body.path || ''));
   const p = name !== null ? playlists.get(name) : null;
   if (!p || !rel) return res.status(400).json({ error: 'bad request' });
-
 
   if (!p.files.includes(rel)) p.files.push(rel);
-
-
   savePlaylists();
-
-
   res.json({ files: p.files });
-
-
 });
 
-
-
 app.post('/playlists/remove', (req, res) => {
-
-
   const body = req.body || {};
   const name = safeDecode(body.name || '');
   const rel = name === null ? null : validRel(safeDecode(body.path || ''));
   const p = name !== null ? playlists.get(name) : null;
   if (!p || !rel) return res.status(400).json({ error: 'bad request' });
 
-
   p.files = p.files.filter(f => f !== rel);
-
-
   savePlaylists();
-
-
   res.json({ files: p.files });
-
-
 });
 
-
-
 app.post('/playlists/move', (req, res) => {
-
-
   const body = req.body || {};
   const name = safeDecode(body.name || '');
   const from = parseInt(body.from);
   const to = parseInt(body.to);
   const p = name !== null ? playlists.get(name) : null;
 
-
   if (!p || isNaN(from) || isNaN(to) || from < 0 || to < 0 || from >= p.files.length || to >= p.files.length) {
-
-
     return res.status(400).json({ error: 'bad request' });
-
-
   }
 
-
   const [f] = p.files.splice(from, 1);
-
-
   p.files.splice(to, 0, f);
-
-
   savePlaylists();
-
-
   res.json({ files: p.files });
-
-
 });
 
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running at http://0.0.0.0:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`Server running at http://${HOST}:${PORT}`);
+  console.log(`Browsing: ${BASE_DIR}`);
 });

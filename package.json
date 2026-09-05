@@ -1,5 +1,46 @@
 {
+  "name": "fbrowse",
+  "version": "1.0.0",
+  "description": "Fast self-hosted media browser for videos and images: on-the-fly ffmpeg thumbnails, voting, favourites, and drag-and-drop playlists.",
+  "license": "MIT",
+  "author": "William (Bill)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beiller/fbrowse.git"
+  },
+  "homepage": "https://github.com/beiller/fbrowse#readme",
+  "bugs": {
+    "url": "https://github.com/beiller/fbrowse/issues"
+  },
+  "keywords": [
+    "media",
+    "browser",
+    "video",
+    "image",
+    "gallery",
+    "thumbnails",
+    "ffmpeg",
+    "playlists",
+    "self-hosted"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "fbrowse": "server.js"
+  },
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "files": [
+    "server.js",
+    "public"
+  ],
   "dependencies": {
     "express": "^5.1.0"
+  },
+  "optionalDependencies": {
+    "ffmpeg-static": "^5.3.0"
   }
 }
