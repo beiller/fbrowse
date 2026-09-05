@@ -23,6 +23,8 @@ Point fbrowse at any folder — a ComfyUI output dir, a photo library, a render 
 npm install -g github:beiller/fbrowse
 ```
 
+> **npm 12+** disables git-fetch installs by default; use `NPM_CONFIG_ALLOW_GIT=always npm install -g github:beiller/fbrowse` (or set `allow-git=always` in your npm config).
+
 Or run it without installing at all:
 
 ```bash
